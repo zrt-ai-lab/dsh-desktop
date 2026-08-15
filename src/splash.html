@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>DSH</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        height: 100%;
+        background: #0f0f10;
+        color: #e8e8ea;
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 26px;
+      }
+      .mark {
+        font-size: 34px;
+        font-weight: 600;
+        letter-spacing: 0.32em;
+        text-indent: 0.32em;
+        background: linear-gradient(92deg, #6f9bff, #b98cff 55%, #6f9bff);
+        background-size: 220% 100%;
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+        animation: sheen 3.4s ease-in-out infinite;
+      }
+      @keyframes sheen {
+        0%, 100% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+      }
+      .track {
+        width: 232px;
+        height: 2px;
+        background: #26262b;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .bar {
+        width: 40%;
+        height: 100%;
+        border-radius: 2px;
+        background: linear-gradient(90deg, transparent, #6f9bff, #b98cff, transparent);
+        animation: slide 1.45s cubic-bezier(0.55, 0, 0.45, 1) infinite;
+      }
+      @keyframes slide {
+        0% { transform: translateX(-110%); }
+        100% { transform: translateX(270%); }
+      }
+      .status {
+        font-size: 12.5px;
+        color: #8b8b95;
+        min-height: 17px;
+        letter-spacing: 0.02em;
+      }
+      .hint {
+        position: absolute;
+        bottom: 26px;
+        font-size: 11px;
+        color: #55555e;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="mark">DSH</div>
+    <div class="track"><div class="bar"></div></div>
+    <div class="status" id="status">正在启动本地服务…</div>
+    <div class="hint">DeepSeek Harness</div>
+    <script>
+      // Cold start reads a ~340 MB runtime from disk; reassure the user as it stretches on.
+      const el = document.getElementById('status');
+      const steps = [
+        [0, '正在启动本地服务…'],
+        [6000, '正在加载运行时…'],
+        [15000, '首次启动需要解压运行时，请稍候…'],
+        [35000, '仍在启动，首次运行较慢，请耐心等待…'],
+      ];
+      const began = Date.now();
+      setInterval(() => {
+        const elapsed = Date.now() - began;
+        let text = steps[0][1];
+        for (const [at, label] of steps) if (elapsed >= at) text = label;
+        el.textContent = text;
+      }, 500);
+    </script>
+  </body>
+</html>

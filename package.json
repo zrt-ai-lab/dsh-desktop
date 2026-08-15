@@ -1,0 +1,63 @@
+{
+  "name": "dsh-desktop",
+  "productName": "DSH",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness desktop client for Windows",
+  "main": "src/main.js",
+  "author": "DSH Desktop",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "stage": "node scripts/stage-runtime.mjs",
+    "audit": "node scripts/audit-release.mjs",
+    "dev": "electron .",
+    "start": "npm run stage && electron .",
+    "dist": "npm run stage && electron-builder --win nsis portable && npm run audit",
+    "dist:dir": "npm run stage && electron-builder --win --dir && npm run audit"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "ai.deepseek.dsh.desktop",
+    "productName": "DSH",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "runtime",
+        "filter": ["**/*"]
+      }
+    ],
+    "asar": true,
+    "compression": "maximum",
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-${arch}-portable.${ext}"
+    },
+    "nsis": {
+      "artifactName": "${productName}-${version}-${arch}-setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DSH",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
