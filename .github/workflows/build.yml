@@ -56,7 +56,10 @@ jobs:
         env:
           # Unsigned builds: stop electron-builder from hunting for a certificate.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --win nsis portable
+        # `--publish never` because electron-builder otherwise infers a publish
+        # target from the repository and demands GH_TOKEN. Releasing is the
+        # dedicated step's job, not the packer's.
+        run: npx electron-builder --win nsis portable --publish never
 
       # The audit is a release gate, not a formality: it fails the build if user
       # data, credentials, or build-machine paths reached the artifacts.
