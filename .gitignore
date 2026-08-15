@@ -2,3 +2,17 @@ runtime/
 dist/
 node_modules/
 *.log
+
+# staging source pinned by DSH_SOURCE_ROOT
+dsh-source/
+
+# scratch
+.commit-msg.tmp
+*.tmp
+
+# windows / editor
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/
