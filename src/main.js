@@ -12,7 +12,7 @@
  * deliberate: DSH loads prebuilt native addons (node-pty, sharp, koffi) that are
  * compiled against standard Node's ABI and would fail to load inside Electron.
  */
-const { app, BrowserWindow, Menu, shell, dialog, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, shell, dialog, clipboard, session, desktopCapturer } = require('electron');
 const { spawn } = require('node:child_process');
 const { existsSync, mkdirSync, createWriteStream } = require('node:fs');
 const { join } = require('node:path');
@@ -223,6 +223,50 @@ function createWindow(url) {
   return mainWindow;
 }
 
+/**
+ * Grant the renderer the screen/mic/camera access a browser would provide.
+ *
+ * Electron refuses `getDisplayMedia()` by default — there is no native picker,
+ * so the shell must approve a source. Scheme 1: always the primary screen, with
+ * `audio: 'loopback'` so system audio is captured alongside (Electron's loopback
+ * actually beats Windows Chrome here, which only offers tab audio).
+ *
+ * This only touches the desktop shell's own session; the same DSH backend opened
+ * in Chrome/Edge keeps using the browser's own picker and is unaffected.
+ */
+function setupMediaCapture() {
+  const ses = session.defaultSession;
+
+  // Screen capture: approve the primary screen whenever the page asks.
+  ses.setDisplayMediaRequestHandler(async (request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['screen'] });
+      const primary = sources[0];
+      if (!primary) {
+        log('display-media request: no screen source available');
+        callback({});
+        return;
+      }
+      log(`display-media request granted: ${primary.name}`);
+      callback({ video: primary, audio: 'loopback' });
+    } catch (error) {
+      log(`display-media request failed: ${error.message}`);
+      callback({});
+    }
+  });
+
+  // Mic / camera: the reelspot plugin also requests these via getUserMedia.
+  // Browsers prompt once; here we allow them so mixing works, and deny anything
+  // else we have not explicitly reasoned about.
+  const ALLOWED = new Set(['media', 'microphone', 'camera']);
+  ses.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(ALLOWED.has(permission));
+  });
+  ses.setPermissionCheckHandler((webContents, permission) => ALLOWED.has(permission));
+
+  log('media capture: screen (primary+loopback), mic, camera granted');
+}
+
 function buildMenu() {
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -368,6 +412,7 @@ app.whenReady().then(async () => {
     return;
   }
 
+  setupMediaCapture();
   buildMenu();
   createSplash();
 
