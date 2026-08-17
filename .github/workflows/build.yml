@@ -2,20 +2,106 @@ name: build
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v*', 'dsh-v*']
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       dsh_version:
-        description: 'DSH version to bundle (npm dist-tag or exact version)'
+        description: 'DSH npm version or dist-tag to bundle'
         required: false
         default: 'latest'
+      publish_release:
+        description: 'Publish a GitHub Release after building'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
 
+concurrency:
+  group: dsh-desktop-release-${{ github.ref || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
-  windows:
-    runs-on: windows-latest
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      dsh_version: ${{ steps.release.outputs.dsh_version }}
+      publish_release: ${{ steps.release.outputs.publish_release }}
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      should_build: ${{ steps.release.outputs.should_build }}
+
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Resolve the official DSH release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.dsh_version || 'latest' }}
+          PUBLISH_INPUT: ${{ inputs.publish_release || 'false' }}
+        run: |
+          requested="$REQUESTED_VERSION"
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF_NAME" == dsh-v* ]]; then
+            requested="${GITHUB_REF_NAME#dsh-v}"
+          fi
+
+          dsh_version="$(npm view "@deepseek-ai/dsh@$requested" version)"
+          release_tag="dsh-v$dsh_version"
+          publish_release=false
+          should_build=true
+
+          if [[ "$GITHUB_EVENT_NAME" == "push" ]]; then
+            release_tag="$GITHUB_REF_NAME"
+            publish_release=true
+          elif [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
+            publish_release=true
+            if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              should_build=false
+              echo "DSH $dsh_version is already published as $release_tag"
+            fi
+          elif [[ "$PUBLISH_INPUT" == "true" ]]; then
+            publish_release=true
+          fi
+
+          echo "dsh_version=$dsh_version" >> "$GITHUB_OUTPUT"
+          echo "publish_release=$publish_release" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+          echo "Bundling official DSH $dsh_version"
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            runner: windows-latest
+            platform: windows
+            arch: x64
+            build_args: --win nsis portable --x64
+            artifact_glob: dist/*.exe
+          - name: macOS Apple Silicon
+            runner: macos-15
+            platform: macos
+            arch: arm64
+            build_args: --mac dmg --arm64
+            artifact_glob: dist/*.dmg
+          - name: macOS Intel
+            runner: macos-15-intel
+            platform: macos
+            arch: x64
+            build_args: --mac dmg --x64
+            artifact_glob: dist/*.dmg
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - uses: actions/checkout@v4
@@ -25,79 +111,92 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install shell dependencies
+      - name: Install desktop dependencies
         run: npm ci
 
-      # A CI runner has no npx cache to stage from, so the DSH release is
-      # installed into a throwaway directory and handed to the stage script
-      # through DSH_SOURCE_ROOT.
-      - name: Install DSH release to stage from
-        shell: pwsh
-        run: |
-          $version = '${{ github.event.inputs.dsh_version }}'
-          if ([string]::IsNullOrWhiteSpace($version)) { $version = 'latest' }
-          New-Item -ItemType Directory -Force -Path dsh-source | Out-Null
-          Push-Location dsh-source
-          npm init -y | Out-Null
-          npm install "@deepseek-ai/dsh@$version" --no-audit --no-fund
-          Pop-Location
-          $staged = (Get-Content 'dsh-source/node_modules/@deepseek-ai/dsh/package.json' -Raw | ConvertFrom-Json).version
-          "DSH_STAGED_VERSION=$staged" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Output "Bundling DSH $staged"
-
-      - name: Stage runtime
-        shell: pwsh
+      - name: Install official DSH runtime
+        shell: bash
         env:
-          DSH_SOURCE_ROOT: ${{ github.workspace }}\dsh-source
+          DSH_VERSION: ${{ needs.prepare.outputs.dsh_version }}
+        run: npm install --prefix dsh-source "@deepseek-ai/dsh@$DSH_VERSION" --no-audit --no-fund
+
+      - name: Use the bundled DSH version for artifact names
+        shell: bash
+        env:
+          DSH_VERSION: ${{ needs.prepare.outputs.dsh_version }}
+        run: npm version "$DSH_VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Stage platform-native runtime
+        env:
+          DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-source
         run: npm run stage
 
-      - name: Build installers
-        shell: pwsh
+      - name: Build distributables
         env:
-          # Unsigned builds: stop electron-builder from hunting for a certificate.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        # `--publish never` because electron-builder otherwise infers a publish
-        # target from the repository and demands GH_TOKEN. Releasing is the
-        # dedicated step's job, not the packer's.
-        run: npx electron-builder --win nsis portable --publish never
+        run: npx electron-builder ${{ matrix.build_args }} --publish never
 
-      # The audit is a release gate, not a formality: it fails the build if user
-      # data, credentials, or build-machine paths reached the artifacts.
       - name: Audit release artifacts
         run: npm run audit
 
       - name: Compute checksums
-        shell: pwsh
-        run: |
-          Get-ChildItem dist -Filter *.exe | ForEach-Object {
-            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
-            "$h  $($_.Name)"
-          } | Tee-Object -FilePath dist/SHA256SUMS.txt
-          Get-Content dist/SHA256SUMS.txt
+        env:
+          DSH_ARTIFACT_PLATFORM: ${{ matrix.platform }}
+          DSH_ARTIFACT_ARCH: ${{ matrix.arch }}
+        run: npm run checksums
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dsh-desktop-windows
+          name: dsh-desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
-            dist/*.exe
-            dist/SHA256SUMS.txt
+            ${{ matrix.artifact_glob }}
+            dist/SHA256SUMS-${{ matrix.platform }}-${{ matrix.arch }}.txt
+          if-no-files-found: error
           retention-days: 14
 
+  release:
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish_release == 'true' && needs.prepare.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dsh-desktop-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Combine checksums
+        shell: bash
+        run: |
+          : > release-assets/SHA256SUMS.txt
+          for checksum in release-assets/SHA256SUMS-*.txt; do
+            cat "$checksum" >> release-assets/SHA256SUMS.txt
+          done
+          cat release-assets/SHA256SUMS.txt
+
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          target_commitish: ${{ github.sha }}
           files: |
-            dist/*.exe
-            dist/SHA256SUMS.txt
+            release-assets/*.exe
+            release-assets/*.dmg
+            release-assets/SHA256SUMS.txt
           body: |
-            Windows desktop build of DeepSeek Harness.
+            Unofficial Windows and macOS desktop builds of DeepSeek Harness.
 
-            Bundles DSH `${{ env.DSH_STAGED_VERSION }}` with its own Node runtime —
-            no Node, pnpm, or other prerequisites needed on the target machine.
+            Bundles official DSH `${{ needs.prepare.outputs.dsh_version }}` with
+            a platform-native Node runtime. No Node or pnpm installation is
+            required on the target machine.
 
-            **These builds are unsigned.** SmartScreen will warn on first run;
-            choose *More info -> Run anyway*. Verify the download against
-            `SHA256SUMS.txt` before installing.
+            - Windows x64: installer and portable executable
+            - macOS arm64: Apple Silicon DMG
+            - macOS x64: Intel DMG
+
+            Windows builds are unsigned. macOS builds are ad-hoc signed but not
+            notarized. SmartScreen and Gatekeeper will warn or block the first
+            launch. Verify the download against `SHA256SUMS.txt` before opening it.
 
             Not affiliated with or endorsed by DeepSeek.

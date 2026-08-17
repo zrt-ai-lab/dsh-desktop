@@ -1,108 +1,97 @@
-# DSH Desktop for Windows
+# DSH Desktop
 
-An unofficial Windows desktop build of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — one installer, no prerequisites.
+Unofficial Windows and macOS desktop builds of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — install the app without first installing Node.js or pnpm.
 
 > Not affiliated with or endorsed by DeepSeek. DSH is redistributed unmodified under its MIT license.
 
 ## Install
 
-Grab the latest [release](../../releases):
+Download the files for your platform from the latest [release](../../releases):
 
-| File | Use |
-|---|---|
-| `DSH-<version>-x64-setup.exe` | Installer, with Start Menu and desktop shortcuts |
-| `DSH-<version>-x64-portable.exe` | Single file, runs without installing |
+| Platform | File | Use |
+|---|---|---|
+| Windows x64 | `DSH-<version>-windows-x64-setup.exe` | Installer with Start Menu and desktop shortcuts |
+| Windows x64 | `DSH-<version>-windows-x64-portable.exe` | Portable executable |
+| Apple Silicon Mac | `DSH-<version>-macos-arm64.dmg` | M1, M2, M3, M4, and newer Apple Silicon Macs |
+| Intel Mac | `DSH-<version>-macos-x64.dmg` | Intel-based Macs |
 
-Windows 10 or 11, 64-bit. Nothing else needed — Node.js and every dependency are bundled.
+Node.js and DSH's platform-native dependencies are bundled in every artifact. The version in each filename is the official DSH version inside the app.
 
-**On first launch Windows will warn you.** These builds are unsigned, so SmartScreen shows *"Windows protected your PC"*. Choose **More info → Run anyway**. Verify your download against `SHA256SUMS.txt` first if you care to:
+### Unnotarized build warnings
+
+The Windows builds are unsigned. The macOS app is ad-hoc signed for bundle integrity but does not have an Apple Developer ID signature or notarization. Windows SmartScreen warns on first launch. On macOS, open the DMG, drag DSH to Applications, try to open it once, then approve DSH under **System Settings → Privacy & Security** if Gatekeeper blocks it. Do not bypass Gatekeeper globally.
+
+Every release includes `SHA256SUMS.txt`. Verify a download before opening it:
 
 ```powershell
-Get-FileHash .\DSH-0.1.0-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\DSH-0.1.0-rc.6-windows-x64-setup.exe -Algorithm SHA256
 ```
 
-**The first start takes 30–55 seconds** while Windows reads the ~340 MB runtime off disk. A splash screen tracks progress. Later starts are much faster.
+```sh
+shasum -a 256 DSH-0.1.0-rc.6-macos-arm64.dmg
+```
 
 ## Set up a model
 
-The app opens with no credentials configured. Either:
+The app opens with no credentials configured. Add a model in **Settings → Models**, or set `DEEPSEEK_API_KEY` before launching the app. DSH stores its profiles, sessions, and file-based credentials in the same `.dsh` directory used by the CLI:
 
-- **In the app** — Settings → Models, paste your key. It is stored in `%USERPROFILE%\.dsh`.
-- **Environment variable** — keeps the key off disk entirely:
-  ```powershell
-  setx DEEPSEEK_API_KEY "your-key-here"
-  ```
-  Then restart the app.
+| Data | Windows | macOS |
+|---|---|---|
+| DSH home | `%USERPROFILE%\.dsh` | `~/.dsh` |
+| Desktop logs | `%APPDATA%\DSH\logs\dsh-desktop.log` | `~/Library/Application Support/DSH/logs/dsh-desktop.log` |
 
-Already use the `dsh` CLI? The desktop app shares the same `%USERPROFILE%\.dsh`, so your existing sessions, profiles, and credentials carry over untouched.
+Uninstalling DSH Desktop does not delete `.dsh`. That directory can contain API keys and full conversation history; do not copy or distribute it with the app.
 
 ## How it works
 
-The shell contains no agent logic. It:
+The Electron shell contains no agent logic. It shows a splash screen, starts the real `dsh web --port 0` backend under a bundled platform-native Node binary, reads the loopback URL from stdout, and opens that URL in a desktop window.
 
-1. shows a splash screen,
-2. spawns the real backend — `dsh web --port 0` — under a bundled `node.exe`,
-3. reads the URL the backend prints, and points a window at it.
+Tools, sandboxing, plugins, and sessions remain inside the official DSH backend. A separate Node process is required because DSH uses native addons such as `node-pty`, `sharp`, and `koffi`, which target the standard Node ABI rather than Electron's ABI. The full `node_modules` tree also remains on disk because Cordis resolves plugin bundles through dynamic `import()` at runtime.
 
-Everything the agent does (tools, sandboxing, plugins, sessions) happens inside that backend process, identical to running `dsh web` in a terminal.
+## Build locally
 
-**Why the backend runs in its own process:** DSH loads prebuilt native addons (`node-pty`, `sharp`, `koffi`) compiled against standard Node's ABI. They fail to load inside Electron. A child process sidesteps the ABI problem entirely and keeps a backend crash from taking the window down with it.
+Install the official DSH release into a staging source directory first:
 
-**Why it isn't a single .exe:** the cordis loader resolves plugin bundles by dynamic `import()` at runtime, so `pkg`-style static bundling breaks it. `node_modules` ships as a real directory tree.
-
-## Your data
-
-| What | Where |
-|---|---|
-| Sessions, profiles, credentials | `%USERPROFILE%\.dsh` (shared with the CLI) |
-| Logs | `%APPDATA%\DSH\logs\dsh-desktop.log` |
-
-Uninstalling **does not** delete `%USERPROFILE%\.dsh`. Remove it by hand if you want a clean slate.
-
-⚠️ That directory holds your API keys and full conversation history. Don't copy it to another machine or hand it to someone else to "save them the setup" — the installer is safe to share, that folder is not.
-
-## Build it yourself
-
-```powershell
-npm install
-npm run stage      # copy node.exe + the DSH runtime into runtime/
-npm run dev        # run against the staged runtime
-npm run dist       # produce installer + portable, then audit them
+```sh
+npm ci
+npm install --prefix dsh-source @deepseek-ai/dsh@latest --no-audit --no-fund
 ```
 
-`stage` pulls from your npx cache by default. To pin a specific release:
+Then build for the current operating system:
+
+```sh
+DSH_SOURCE_ROOT="$PWD/dsh-source" npm run dist:mac   # macOS, current CPU architecture
+```
 
 ```powershell
-mkdir dsh-source; cd dsh-source
-npm init -y; npm install @deepseek-ai/dsh@0.1.0-rc.6
-cd ..
 $env:DSH_SOURCE_ROOT = "$PWD\dsh-source"
-npm run stage
+npm run dist:win
 ```
 
-Tag a commit `v*` to have CI build and publish a release.
+`npm run stage` can also use the most recent DSH installation in the local npx cache. `DSH_SOURCE_ROOT` is preferred for repeatable builds.
 
-### Layout
+### Release automation
 
-```
-src/main.js                 Electron main process — the entire shell
-src/splash.html             startup feedback for the slow cold start
-scripts/stage-runtime.mjs   copies node.exe + DSH into runtime/
-scripts/audit-release.mjs   release gate: blocks leaked secrets and user data
-.github/workflows/build.yml CI build and release
-```
+The GitHub Actions workflow builds three native artifacts on their matching runners:
 
-### The release gate
+- Windows x64 on a Windows runner
+- macOS arm64 on an Apple Silicon runner
+- macOS x64 on an Intel runner
 
-`npm run audit` runs after every packaging step and **fails the build** if artifacts contain credential files, secret-shaped strings (OpenAI/Anthropic/AWS/GitHub/Google/Slack keys, private keys, bearer tokens), DSH user-data directories, or the build machine's paths. It is wired into `npm run dist` so it cannot be skipped by accident.
+Manual runs accept an npm version or dist-tag such as `latest` or `0.1.0-rc.6`. A daily check resolves `@deepseek-ai/dsh@latest`; when that official version has no `dsh-v<version>` release yet, the workflow builds and publishes it automatically. A pushed `v*` or `dsh-v*` tag also publishes a release.
+
+Each runner installs DSH natively before staging, so its bundled Node binary and native addons match both the operating system and CPU architecture. Do not build a universal macOS artifact by combining these trees: the runtime contains architecture-specific native dependencies.
+
+### Release safety gate
+
+`npm run audit` scans the staged runtime and unpacked application data. It fails if credential files, secret-shaped strings, DSH user-data directories, or build-machine paths enter the release. `npm run checksums` writes SHA-256 checksums for the distributable files.
 
 ## Known limits
 
-- Windows x64 only.
-- Unsigned — SmartScreen warns on first run. Fixing this needs a code-signing certificate.
-- Cold start is slow (see above).
+- Windows artifacts are unsigned, and macOS artifacts are ad-hoc signed but not notarized. macOS distribution without Gatekeeper warnings requires an Apple Developer ID certificate and notarization; Windows reputation requires code signing.
+- Screen, microphone, and camera capture remain subject to operating-system permissions. Windows supports Electron loopback system audio; the macOS shell currently requests screen video without loopback audio.
 - `dsh plugin add` needs pnpm, which is not bundled. Install plugins from the CLI.
-- The backend always binds `--port 0` (an OS-assigned port), so it never collides with a `dsh web` you already have running.
+- The backend always binds an OS-assigned loopback port, so it does not collide with another `dsh web` process.
 
 ## License
 
