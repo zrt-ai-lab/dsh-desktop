@@ -345,7 +345,7 @@ function buildMenu() {
                 title: '关于 DSH',
                 message: 'DSH Desktop',
                 detail: [
-                  `外壳版本: ${app.getVersion()}`,
+                  `应用版本: ${app.getVersion()}`,
                   `DSH 版本: ${staged.dshVersion ?? '未知'}`,
                   `内置 Node: ${staged.nodeVersion ?? '未知'}`,
                   `运行平台: ${staged.platform ?? process.platform}/${staged.arch ?? process.arch}`,

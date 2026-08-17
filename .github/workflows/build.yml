@@ -120,12 +120,6 @@ jobs:
           DSH_VERSION: ${{ needs.prepare.outputs.dsh_version }}
         run: npm install --prefix dsh-source "@deepseek-ai/dsh@$DSH_VERSION" --no-audit --no-fund
 
-      - name: Use the bundled DSH version for artifact names
-        shell: bash
-        env:
-          DSH_VERSION: ${{ needs.prepare.outputs.dsh_version }}
-        run: npm version "$DSH_VERSION" --no-git-tag-version --allow-same-version
-
       - name: Stage platform-native runtime
         env:
           DSH_SOURCE_ROOT: ${{ github.workspace }}/dsh-source
@@ -134,7 +128,7 @@ jobs:
       - name: Build distributables
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder ${{ matrix.build_args }} --publish never
+        run: node scripts/build-release.mjs ${{ matrix.build_args }}
 
       - name: Audit release artifacts
         run: npm run audit

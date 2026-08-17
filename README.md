@@ -15,7 +15,7 @@ Download the files for your platform from the latest [release](../../releases):
 | Apple Silicon Mac | `DSH-<version>-macos-arm64.dmg` | M1, M2, M3, M4, and newer Apple Silicon Macs |
 | Intel Mac | `DSH-<version>-macos-x64.dmg` | Intel-based Macs |
 
-Node.js and DSH's platform-native dependencies are bundled in every artifact. The version in each filename is the official DSH version inside the app.
+Node.js and DSH's platform-native dependencies are bundled in every artifact. Every documented local or CI build reads `runtime/stage.json`, so the filename and the application version both use the exact official DSH version inside the app.
 
 ### Unnotarized build warnings
 
@@ -68,7 +68,7 @@ $env:DSH_SOURCE_ROOT = "$PWD\dsh-source"
 npm run dist:win
 ```
 
-`npm run stage` can also use the most recent DSH installation in the local npx cache. `DSH_SOURCE_ROOT` is preferred for repeatable builds.
+`npm run stage` can also use the most recent DSH installation in the local npx cache. `DSH_SOURCE_ROOT` is preferred for repeatable builds. Do not invoke `electron-builder` directly: the `dist:*` scripts use `scripts/build-release.mjs` to apply the staged official DSH version consistently.
 
 ### Release automation
 

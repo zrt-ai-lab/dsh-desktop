@@ -9,14 +9,15 @@
   "private": true,
   "scripts": {
     "stage": "node scripts/stage-runtime.mjs",
+    "build:release": "node scripts/build-release.mjs",
     "audit": "node scripts/audit-release.mjs",
     "checksums": "node scripts/checksums.mjs",
     "dev": "electron .",
     "start": "npm run stage && electron .",
-    "dist": "npm run stage && electron-builder --publish never && npm run audit",
-    "dist:win": "npm run stage && electron-builder --win nsis portable --x64 --publish never && npm run audit",
-    "dist:mac": "npm run stage && electron-builder --mac dmg --publish never && npm run audit",
-    "dist:dir": "npm run stage && electron-builder --dir --publish never && npm run audit"
+    "dist": "npm run stage && npm run build:release && npm run audit",
+    "dist:win": "npm run stage && npm run build:release -- --win nsis portable --x64 && npm run audit",
+    "dist:mac": "npm run stage && npm run build:release -- --mac dmg && npm run audit",
+    "dist:dir": "npm run stage && npm run build:release -- --dir && npm run audit"
   },
   "devDependencies": {
     "electron": "^43.0.0",
