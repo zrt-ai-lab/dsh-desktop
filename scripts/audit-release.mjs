@@ -83,6 +83,10 @@ function audit(root, label) {
     }
     for (const entry of entries) {
       const full = join(current, entry.name);
+      if (entry.isSymbolicLink()) {
+        if (/[\\/]runtime[\\/]/.test(full)) record('FAIL', 'symbolic link shipped inside runtime', full);
+        continue;
+      }
       if (entry.isDirectory()) {
         // Only a user-data directory sitting at the DSH home root is a leak.
         // Package source trees legitimately contain folders named `sessions`
@@ -147,7 +151,7 @@ console.log('[audit] release safety audit\n');
 
 const targets = [
   [join(PROJECT, 'runtime'), 'runtime/'],
-  [join(PROJECT, 'dist', 'win-unpacked'), 'dist/win-unpacked/'],
+  [join(PROJECT, 'dist'), 'dist/'],
 ];
 let auditedAny = false;
 for (const [path, label] of targets) {

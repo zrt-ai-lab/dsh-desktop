@@ -1,19 +1,23 @@
 {
   "name": "dsh-desktop",
   "productName": "DSH",
-  "version": "0.1.1",
-  "description": "DeepSeek Harness desktop client for Windows",
+  "version": "0.2.0",
+  "description": "Unofficial cross-platform desktop build of DeepSeek Harness",
   "main": "src/main.js",
   "author": "DSH Desktop",
   "license": "MIT",
   "private": true,
   "scripts": {
     "stage": "node scripts/stage-runtime.mjs",
+    "build:release": "node scripts/build-release.mjs",
     "audit": "node scripts/audit-release.mjs",
+    "checksums": "node scripts/checksums.mjs",
     "dev": "electron .",
     "start": "npm run stage && electron .",
-    "dist": "npm run stage && electron-builder --win nsis portable && npm run audit",
-    "dist:dir": "npm run stage && electron-builder --win --dir && npm run audit"
+    "dist": "npm run stage && npm run build:release && npm run audit",
+    "dist:win": "npm run stage && npm run build:release -- --win nsis portable --x64 && npm run audit",
+    "dist:mac": "npm run stage && npm run build:release -- --mac dmg && npm run audit",
+    "dist:dir": "npm run stage && npm run build:release -- --dir && npm run audit"
   },
   "devDependencies": {
     "electron": "^43.0.0",
@@ -26,6 +30,7 @@
       "output": "dist",
       "buildResources": "build"
     },
+    "afterPack": "scripts/after-pack.cjs",
     "files": [
       "src/**/*",
       "package.json"
@@ -44,13 +49,13 @@
         { "target": "nsis", "arch": ["x64"] },
         { "target": "portable", "arch": ["x64"] }
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${productName}-${version}-windows-${arch}.${ext}"
     },
     "portable": {
-      "artifactName": "${productName}-${version}-${arch}-portable.${ext}"
+      "artifactName": "${productName}-${version}-windows-${arch}-portable.${ext}"
     },
     "nsis": {
-      "artifactName": "${productName}-${version}-${arch}-setup.${ext}",
+      "artifactName": "${productName}-${version}-windows-${arch}-setup.${ext}",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
@@ -58,6 +63,19 @@
       "createStartMenuShortcut": true,
       "shortcutName": "DSH",
       "deleteAppDataOnUninstall": false
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg" }
+      ],
+      "artifactName": "${productName}-${version}-macos-${arch}.${ext}",
+      "category": "public.app-category.developer-tools",
+      "identity": null,
+      "hardenedRuntime": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "DSH uses the microphone only when you enable media capture in an agent session.",
+        "NSCameraUsageDescription": "DSH uses the camera only when you enable media capture in an agent session."
+      }
     }
   }
 }

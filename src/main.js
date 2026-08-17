@@ -8,7 +8,7 @@
  * sandboxing, plugins, sessions — stays inside that backend process exactly as
  * it behaves from a terminal.
  *
- * Running the backend under a plain `node.exe` (not under Electron's Node) is
+ * Running the backend under a plain Node binary (not under Electron's Node) is
  * deliberate: DSH loads prebuilt native addons (node-pty, sharp, koffi) that are
  * compiled against standard Node's ABI and would fail to load inside Electron.
  */
@@ -29,7 +29,7 @@ const IS_PACKAGED = app.isPackaged;
 const RUNTIME_ROOT = IS_PACKAGED
   ? join(process.resourcesPath, 'runtime')
   : join(__dirname, '..', 'runtime');
-const NODE_BIN = join(RUNTIME_ROOT, 'node', 'node.exe');
+const NODE_BIN = join(RUNTIME_ROOT, 'node', process.platform === 'win32' ? 'node.exe' : 'node');
 const DSH_BIN = join(RUNTIME_ROOT, 'dsh', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js');
 /** User data (profiles, sessions, credentials) stays in the canonical DSH home, shared with the CLI. */
 const DSH_HOME = process.env.DSH_HOME || join(homedir(), '.dsh');
@@ -94,6 +94,8 @@ function startBackend() {
         NODE_OPTIONS: undefined,
       },
       windowsHide: true,
+      // A separate POSIX process group lets shutdown reach backend descendants.
+      detached: process.platform !== 'win32',
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -227,9 +229,9 @@ function createWindow(url) {
  * Grant the renderer the screen/mic/camera access a browser would provide.
  *
  * Electron refuses `getDisplayMedia()` by default — there is no native picker,
- * so the shell must approve a source. Scheme 1: always the primary screen, with
- * `audio: 'loopback'` so system audio is captured alongside (Electron's loopback
- * actually beats Windows Chrome here, which only offers tab audio).
+ * so the shell must approve a source. Scheme 1 always selects the primary
+ * screen. Windows also receives Electron's loopback system audio; macOS applies
+ * its own Screen Recording permissions and receives video only here.
  *
  * This only touches the desktop shell's own session; the same DSH backend opened
  * in Chrome/Edge keeps using the browser's own picker and is unaffected.
@@ -248,7 +250,7 @@ function setupMediaCapture() {
         return;
       }
       log(`display-media request granted: ${primary.name}`);
-      callback({ video: primary, audio: 'loopback' });
+      callback(process.platform === 'win32' ? { video: primary, audio: 'loopback' } : { video: primary });
     } catch (error) {
       log(`display-media request failed: ${error.message}`);
       callback({});
@@ -264,12 +266,11 @@ function setupMediaCapture() {
   });
   ses.setPermissionCheckHandler((webContents, permission) => ALLOWED.has(permission));
 
-  log('media capture: screen (primary+loopback), mic, camera granted');
+  log(`media capture: screen${process.platform === 'win32' ? '+loopback' : ''}, mic, camera granted`);
 }
 
 function buildMenu() {
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
+  const template = [
       {
         label: '文件',
         submenu: [
@@ -281,7 +282,8 @@ function buildMenu() {
             },
           },
           { type: 'separator' },
-          { role: 'quit', label: '退出' },
+          { role: 'close', label: '关闭窗口' },
+          ...(process.platform === 'darwin' ? [] : [{ role: 'quit', label: '退出' }]),
         ],
       },
       {
@@ -343,9 +345,10 @@ function buildMenu() {
                 title: '关于 DSH',
                 message: 'DSH Desktop',
                 detail: [
-                  `外壳版本: ${app.getVersion()}`,
+                  `应用版本: ${app.getVersion()}`,
                   `DSH 版本: ${staged.dshVersion ?? '未知'}`,
                   `内置 Node: ${staged.nodeVersion ?? '未知'}`,
+                  `运行平台: ${staged.platform ?? process.platform}/${staged.arch ?? process.arch}`,
                   `Electron: ${process.versions.electron}`,
                   `服务地址: ${backendUrl ?? '未启动'}`,
                   `数据目录: ${DSH_HOME}`,
@@ -356,8 +359,26 @@ function buildMenu() {
           },
         ],
       },
-    ]),
-  );
+  ];
+
+  if (process.platform === 'darwin') {
+    template.unshift({
+      label: app.name,
+      submenu: [
+        { role: 'about', label: '关于 DSH' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide', label: '隐藏 DSH' },
+        { role: 'hideOthers', label: '隐藏其他' },
+        { role: 'unhide', label: '全部显示' },
+        { type: 'separator' },
+        { role: 'quit', label: '退出 DSH' },
+      ],
+    });
+  }
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 /** Stop the backend, giving it a chance to flush sessions before forcing it down. */
@@ -367,17 +388,20 @@ function stopBackend() {
   const child = backend;
   backend = null;
   log('stopping backend');
-  try {
-    // On Windows a tree kill is required: the backend spawns its own children
-    // (pwsh, subagents, jobs) that would otherwise be orphaned.
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
-  } catch (error) {
-    log(`taskkill failed, falling back to kill(): ${error.message}`);
+  if (process.platform === 'win32') {
     try {
-      child.kill();
-    } catch {
-      /* already gone */
+      // The backend spawns pwsh, subagents, and jobs; stop the whole tree.
+      spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+      return;
+    } catch (error) {
+      log(`taskkill failed, falling back to kill(): ${error.message}`);
     }
+  }
+  try {
+    if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, 'SIGTERM');
+    else child.kill();
+  } catch {
+    /* the backend process group is already gone */
   }
 }
 
@@ -394,7 +418,10 @@ app.on('window-all-closed', () => {
   // During startup the splash is briefly the only window and closes just before
   // the main window appears; quitting on that transition would kill the launch.
   if (backendUrl === null) return;
-  app.quit();
+  if (process.platform !== 'darwin') app.quit();
+});
+app.on('activate', () => {
+  if (!mainWindow && backendUrl) createWindow(backendUrl);
 });
 app.on('before-quit', stopBackend);
 app.on('will-quit', stopBackend);
