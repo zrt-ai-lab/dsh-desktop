@@ -119,7 +119,7 @@ jobs:
         run: npm ci
 
       - name: Upgrade node-gyp for current image toolchains
-        run: npm install --no-save --no-package-lock --no-audit --no-fund node-gyp@11
+        run: npm install --no-save --no-package-lock --no-audit --no-fund node-gyp@13
 
       - name: Install official DSH runtime
         shell: bash
