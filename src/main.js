@@ -35,7 +35,7 @@ const DSH_BIN = join(RUNTIME_ROOT, 'dsh', 'node_modules', '@deepseek-ai', 'dsh',
 const DSH_HOME = process.env.DSH_HOME || join(homedir(), '.dsh');
 const LOG_DIR = join(app.getPath('userData'), 'logs');
 /** The backend prints `dsh web: http://127.0.0.1:<port>` once the server is bound. */
-const URL_PATTERN = /dsh web:\s*(http:\/\/127\.0\.0\.1:\d+)/;
+const URL_PATTERN = /dsh web:\s*(http:\/\/127\.0\.0\.1:\d+)(\/\?token=[^\s)]+)?/;
 const BACKEND_TIMEOUT_MS = 90_000;
 
 /** @type {import('electron').BrowserWindow | null} */
@@ -47,6 +47,7 @@ let backend = null;
 /** @type {import('node:fs').WriteStream | null} */
 let logStream = null;
 let backendUrl = null;
+let backendOrigin = null;
 let quitting = false;
 /** Recent backend output, replayed in the error dialog when startup fails. */
 const recentOutput = [];
@@ -115,7 +116,8 @@ function startBackend() {
       if (match && !settled) {
         settled = true;
         clearTimeout(timer);
-        backendUrl = match[1];
+        backendUrl = match[1] + (match[2] ?? "");
+        backendOrigin = match[1];
         log(`backend ready at ${backendUrl}`);
         resolve(backendUrl);
       }
@@ -179,7 +181,7 @@ function closeSplash() {
   splashWindow = null;
 }
 
-function createWindow(url) {
+function createWindow(url, origin = url) {
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 920,
@@ -208,14 +210,14 @@ function createWindow(url) {
 
   // External links open in the real browser, never in an app window.
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
-    if (!target.startsWith(url)) {
+    if (!target.startsWith(origin)) {
       shell.openExternal(target);
       return { action: 'deny' };
     }
     return { action: 'allow' };
   });
   mainWindow.webContents.on('will-navigate', (event, target) => {
-    if (!target.startsWith(url)) {
+    if (!target.startsWith(origin)) {
       event.preventDefault();
       shell.openExternal(target);
     }
@@ -278,7 +280,7 @@ function buildMenu() {
             label: '新建窗口',
             accelerator: 'CmdOrCtrl+Shift+N',
             click: () => {
-              if (backendUrl) createWindow(backendUrl);
+              if (backendUrl) createWindow(backendUrl, backendOrigin);
             },
           },
           { type: 'separator' },
@@ -410,7 +412,7 @@ app.on('second-instance', () => {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
   } else if (backendUrl) {
-    createWindow(backendUrl);
+    createWindow(backendUrl, backendOrigin);
   }
 });
 
@@ -421,7 +423,7 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 app.on('activate', () => {
-  if (!mainWindow && backendUrl) createWindow(backendUrl);
+  if (!mainWindow && backendUrl) createWindow(backendUrl, backendOrigin);
 });
 app.on('before-quit', stopBackend);
 app.on('will-quit', stopBackend);
@@ -445,7 +447,7 @@ app.whenReady().then(async () => {
 
   try {
     const url = await startBackend();
-    createWindow(url);
+    createWindow(url, backendOrigin);
   } catch (error) {
     log(`startup failed: ${error.message}`);
     closeSplash();
